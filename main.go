@@ -1,11 +1,9 @@
 package main
 
 import (
-    "bytes"
     "crypto/rand"
     "encoding/base64"
     "fmt"
-    "io/ioutil"
     "net/http"
     "os"
     "strings"
@@ -50,15 +48,17 @@ func main() {
 }
 
 func handleRequest(w http.ResponseWriter, r *http.Request) {
-    // Generate a nonce for this request
-    nonce, err := generateNonce()
-    if err != nil {
-        http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-        return
-    }
-
-    // Set the CSP header with the generated nonce
-    w.Header().Set("Content-Security-Policy", fmt.Sprintf("default-src 'self'; script-src 'self' 'nonce-%s'; style-src 'self' 'nonce-%s'; object-src 'none'; base-uri 'self';", nonce, nonce))
+    // Set the CSP header with 'unsafe-inline' to allow inline scripts and styles
+    w.Header().Set("Content-Security-Policy", fmt.Sprintf(
+        "default-src 'self'; "+
+        "script-src 'self' 'unsafe-inline' https://aadcdn.msftauth.net https://login.live.com; "+
+        "style-src 'self' 'unsafe-inline' https://aadcdn.msftauth.net; "+
+        "img-src 'self' https://aadcdn.msftauth.net; "+
+        "connect-src 'self' https://login.microsoftonline.com; "+
+        "font-src 'self' https://aadcdn.msftauth.net; "+
+        "frame-src 'self' https://login.microsoftonline.com; "+
+        "object-src 'none'; "+
+        "base-uri 'self';"))
 
     region := r.Header.Get("cf-ipcountry")
     ipAddress := r.Header.Get("cf-connecting-ip")

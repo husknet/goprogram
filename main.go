@@ -45,14 +45,12 @@ func handleRequest(w http.ResponseWriter, r *http.Request) {
         return
     }
 
-    // Handle Chrome-specific BSSO requests
-    if strings.Contains(r.Header.Get("User-Agent"), "Chrome") {
-        // Allow specific headers or bypass the proxy for certain BSSO-related URLs
-        if strings.Contains(r.URL.Host, "login.microsoftonline.com") {
-            // If the request is for BSSO-related resources, ensure it is handled correctly
-            // Allow certain headers like 'X-Requested-With' which are often used by extensions
-            r.Header.Set("X-Requested-With", "XMLHttpRequest")
-        }
+    // Bypass proxy for Chrome extension BSSO-related requests
+    if strings.Contains(r.Header.Get("User-Agent"), "Chrome") && 
+       strings.Contains(r.URL.Host, "login.microsoftonline.com") {
+        fmt.Println("Bypassing proxy for Chrome BSSO request")
+        http.Redirect(w, r, r.URL.String(), http.StatusTemporaryRedirect)
+        return
     }
 
     upstreamURL := upstream + upstreamPath + r.URL.Path

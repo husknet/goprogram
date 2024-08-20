@@ -12,8 +12,6 @@ import (
 	"log"
 	"math/big"
 	"net/http"
-	"net/url"
-	"os"
 	"time"
 )
 
@@ -116,25 +114,13 @@ func generateSelfSignedCert() (tls.Certificate, error) {
 func main() {
 	http.HandleFunc("/", handleProxy)
 
-	// Attempt to find the SSL certificate and key files
-	certFile, keyFile, err := findCertAndKey()
-
-	var tlsCert tls.Certificate
-
+	// Generate a self-signed certificate since the findCertAndKey function is omitted
+	tlsCert, err := generateSelfSignedCert()
 	if err != nil {
-		log.Println("Failed to find SSL certificate and key files, generating self-signed certificate.")
-		tlsCert, err = generateSelfSignedCert()
-		if err != nil {
-			log.Fatal("Failed to generate self-signed certificate:", err)
-		}
-	} else {
-		tlsCert, err = tls.LoadX509KeyPair(certFile, keyFile)
-		if err != nil {
-			log.Fatal("Failed to load SSL certificate and key files:", err)
-		}
+		log.Fatal("Failed to generate self-signed certificate:", err)
 	}
 
-	// Configure HTTPS server with the certificate
+	// Configure HTTPS server with the generated certificate
 	server := &http.Server{
 		Addr: ":8443",
 		TLSConfig: &tls.Config{

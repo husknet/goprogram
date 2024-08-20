@@ -24,8 +24,8 @@ func main() {
     // Retrieve the PORT from environment variables
     port := os.Getenv("PORT")
     if port == "" {
-        port = "10000" // Default to port 10000 if not set
-        fmt.Println("PORT environment variable not set, defaulting to 10000")
+        port = "8080" // Default to port 8080 if not set
+        fmt.Println("PORT environment variable not set, defaulting to 8080")
     }
 
     http.HandleFunc("/", handleRequest)

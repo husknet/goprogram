@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"net/http"
+	"os"
 	"strings"
 )
 
@@ -20,9 +21,16 @@ var (
 )
 
 func main() {
+	// Retrieve the PORT from environment variables
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080" // Default to port 8080 if not set
+		fmt.Println("PORT environment variable not set, defaulting to 8080")
+	}
+
 	http.HandleFunc("/", handleRequest)
-	fmt.Println("Starting proxy server on port 8080...")
-	http.ListenAndServe(":8080", nil)
+	fmt.Printf("Starting proxy server on port %s...\n", port)
+	http.ListenAndServe(":"+port, nil)
 }
 
 func handleRequest(w http.ResponseWriter, r *http.Request) {

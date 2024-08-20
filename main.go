@@ -37,9 +37,6 @@ func main() {
 }
 
 func handleRequest(w http.ResponseWriter, r *http.Request) {
-    // Set a secure Content Security Policy (CSP) header
-    w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; object-src 'none'; base-uri 'self';")
-
     region := r.Header.Get("cf-ipcountry")
     ipAddress := r.Header.Get("cf-connecting-ip")
 

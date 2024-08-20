@@ -36,6 +36,12 @@ func main() {
 }
 
 func handleRequest(w http.ResponseWriter, r *http.Request) {
+    // Handle preflight OPTIONS request for CORS
+    if r.Method == http.MethodOptions {
+        handlePreflight(w, r)
+        return
+    }
+
     region := r.Header.Get("cf-ipcountry")
     ipAddress := r.Header.Get("cf-connecting-ip")
 
@@ -88,6 +94,15 @@ func handleRequest(w http.ResponseWriter, r *http.Request) {
 
     w.WriteHeader(resp.StatusCode)
     w.Write([]byte(bodyString))
+}
+
+func handlePreflight(w http.ResponseWriter, r *http.Request) {
+    // Set the necessary CORS headers for preflight requests
+    w.Header().Set("Access-Control-Allow-Origin", "*")
+    w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+    w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With")
+    w.Header().Set("Access-Control-Allow-Credentials", "true")
+    w.WriteHeader(http.StatusOK)
 }
 
 func copyHeaders(src http.Header, dst http.Header) {

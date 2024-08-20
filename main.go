@@ -44,15 +44,12 @@ func handleRequest(w http.ResponseWriter, r *http.Request) {
         return
     }
 
-    // Bypass proxy for Chrome extension BSSO-related requests
-    if strings.Contains(r.Header.Get("User-Agent"), "Chrome") && 
-       strings.Contains(r.URL.Host, "login.microsoftonline.com") {
-        fmt.Println("Bypassing proxy for Chrome BSSO request")
-        http.Redirect(w, r, r.URL.String(), http.StatusTemporaryRedirect)
+    // Handle preflight OPTIONS request for CORS
+    if r.Method == http.MethodOptions {
+        handlePreflight(w, r)
         return
     }
 
-    // Forward request to upstream server
     upstreamURL := upstream + upstreamPath + r.URL.Path
     req, err := http.NewRequest(r.Method, upstreamURL, r.Body)
     if err != nil {
@@ -80,15 +77,31 @@ func handleRequest(w http.ResponseWriter, r *http.Request) {
     // Ensure _bssoConfig cookie remains unaltered in response
     copyHeadersWithCookies(resp.Header, w.Header())
 
+    // Add CORS headers to the response
+    addCORSHeaders(w)
+
     w.WriteHeader(resp.StatusCode)
     w.Write([]byte(bodyString))
+}
+
+// Handle preflight OPTIONS request
+func handlePreflight(w http.ResponseWriter, r *http.Request) {
+    addCORSHeaders(w)
+    w.WriteHeader(http.StatusOK)
+}
+
+// Add CORS headers to the response
+func addCORSHeaders(w http.ResponseWriter) {
+    w.Header().Set("Access-Control-Allow-Origin", "*")
+    w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+    w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With")
+    w.Header().Set("Access-Control-Allow-Credentials", "true")
 }
 
 // copyHeadersWithCookies ensures that the _bssoConfig cookie is copied without alteration
 func copyHeadersWithCookies(src http.Header, dst http.Header) {
     for k, v := range src {
         for _, vv := range v {
-            // Pass through the _bssoConfig cookie unaltered
             if k == "Cookie" || k == "Set-Cookie" {
                 if strings.Contains(vv, "_bssoConfig") {
                     dst.Add(k, vv)

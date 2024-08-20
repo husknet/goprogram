@@ -1,13 +1,20 @@
 package main
 
 import (
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
 	"io"
 	"log"
+	"math/big"
 	"net/http"
 	"net/url"
 	"os"
-	"path/filepath"
+	"time"
 )
 
 func handleProxy(w http.ResponseWriter, r *http.Request) {
@@ -64,38 +71,46 @@ func handleProxy(w http.ResponseWriter, r *http.Request) {
 	io.Copy(w, resp.Body)
 }
 
-func findCertAndKey() (string, string, error) {
-	// Specify the directory to search for SSL certificate and key files
-	certDir := "./certs"
-
-	// Define the expected certificate and key filenames
-	var certFile, keyFile string
-
-	// Walk through the directory to find the cert and key files
-	err := filepath.Walk(certDir, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
-		if !info.IsDir() {
-			if filepath.Ext(path) == ".crt" {
-				certFile = path
-			} else if filepath.Ext(path) == ".key" {
-				keyFile = path
-			}
-		}
-		return nil
-	})
-
+func generateSelfSignedCert() (tls.Certificate, error) {
+	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
-		return "", "", err
+		return tls.Certificate{}, err
 	}
 
-	// Check if both files were found
-	if certFile == "" || keyFile == "" {
-		return "", "", os.ErrNotExist
+	notBefore := time.Now()
+	notAfter := notBefore.Add(365 * 24 * time.Hour)
+
+	serialNumber, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
+	if err != nil {
+		return tls.Certificate{}, err
 	}
 
-	return certFile, keyFile, nil
+	template := x509.Certificate{
+		SerialNumber: serialNumber,
+		Subject: pkix.Name{
+			Organization: []string{"Auto-Generated Cert"},
+		},
+		NotBefore: notBefore,
+		NotAfter:  notAfter,
+
+		KeyUsage:              x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		BasicConstraintsValid: true,
+	}
+
+	certDER, err := x509.CreateCertificate(rand.Reader, &template, &template, &priv.PublicKey, priv)
+	if err != nil {
+		return tls.Certificate{}, err
+	}
+
+	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER})
+	keyBytes, err := x509.MarshalECPrivateKey(priv)
+	if err != nil {
+		return tls.Certificate{}, err
+	}
+	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyBytes})
+
+	return tls.X509KeyPair(certPEM, keyPEM)
 }
 
 func main() {
@@ -103,18 +118,31 @@ func main() {
 
 	// Attempt to find the SSL certificate and key files
 	certFile, keyFile, err := findCertAndKey()
+
+	var tlsCert tls.Certificate
+
 	if err != nil {
-		log.Fatal("Failed to find SSL certificate and key files:", err)
+		log.Println("Failed to find SSL certificate and key files, generating self-signed certificate.")
+		tlsCert, err = generateSelfSignedCert()
+		if err != nil {
+			log.Fatal("Failed to generate self-signed certificate:", err)
+		}
+	} else {
+		tlsCert, err = tls.LoadX509KeyPair(certFile, keyFile)
+		if err != nil {
+			log.Fatal("Failed to load SSL certificate and key files:", err)
+		}
 	}
 
-	// Configure HTTPS server
+	// Configure HTTPS server with the certificate
 	server := &http.Server{
 		Addr: ":8443",
 		TLSConfig: &tls.Config{
-			MinVersion: tls.VersionTLS12, // Ensure a minimum version of TLS
+			Certificates: []tls.Certificate{tlsCert},
+			MinVersion:   tls.VersionTLS12, // Ensure a minimum version of TLS
 		},
 	}
 
 	log.Println("HTTPS proxy server is running on https://localhost:8443")
-	log.Fatal(server.ListenAndServeTLS(certFile, keyFile))
+	log.Fatal(server.ListenAndServeTLS("", ""))
 }

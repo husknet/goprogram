@@ -1,7 +1,3 @@
-module my-go-proxy
+module my-go-backend
 
-go 1.23.0
-
-require (
-	github.com/gorilla/mux v1.8.0
-)
+go 1.18

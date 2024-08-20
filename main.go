@@ -24,13 +24,13 @@ func main() {
     // Retrieve the PORT from environment variables
     port := os.Getenv("PORT")
     if port == "" {
-        port = "8080" // Default to port 8080 if not set
-        fmt.Println("PORT environment variable not set, defaulting to 8080")
+        port = "10000" // Default to port 10000 if not set
+        fmt.Println("PORT environment variable not set, defaulting to 10000")
     }
 
     http.HandleFunc("/", handleRequest)
     fmt.Printf("Starting proxy server on port %s...\n", port)
-    if err := http.ListenAndServe(":"+port, nil); err != nil {
+    if err := http.ListenAndServe("0.0.0.0:"+port, nil); err != nil {
         fmt.Printf("Error starting server: %v\n", err)
         os.Exit(1)
     }
